@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CyberShield — SOC Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  :root {
+    --bg0: #070b14; --bg1: #0b1222; --bg2: #0d1628; --bg3: #111e35;
+    --border: #1a3050; --border2: #243d60;
+    --text1: #ddeeff; --text2: #7a9ab8; --text3: #3a5a7a;
+    --green: #00e87a; --blue: #4499ff; --amber: #ffaa00;
+    --red: #ff4444; --purple: #aa55ff; --cyan: #00ccff;
+    --font: 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg0); color: var(--text1); font-family: var(--font); font-size: 13px; min-height: 100vh; }
+
+  /* ── Header ── */
+  .hdr { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; background: var(--bg1); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+  .hdr-logo { display: flex; align-items: center; gap: 10px; }
+  .live-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: blink 2s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .logo-txt { font-size: 15px; font-weight: 700; letter-spacing: 3px; color: #e8f4ff; }
+  .logo-sub { font-size: 10px; color: var(--text3); letter-spacing: 2px; }
+  .hdr-status { display: flex; gap: 18px; align-items: center; }
+  .st-chip { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text2); }
+  .st-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .dot-g { background: var(--green); }
+  .dot-a { background: var(--amber); }
+  .dot-r { background: var(--red); animation: blink 1s infinite; }
+  #clock { color: var(--text3); font-size: 11px; }
+  .ws-badge { font-size: 9px; padding: 2px 8px; border-radius: 3px; background: rgba(0,232,122,.12); color: var(--green); border: 1px solid rgba(0,232,122,.3); }
+
+  /* ── Layout ── */
+  .main { padding: 14px 20px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── Metric cards ── */
+  .metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .mc { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .mc-lbl { font-size: 9px; letter-spacing: 1.8px; color: var(--text3); text-transform: uppercase; margin-bottom: 5px; }
+  .mc-val { font-size: 24px; font-weight: 700; }
+  .mc-sub { font-size: 10px; margin-top: 3px; color: var(--text3); }
+  .c-green { color: var(--green); } .c-red { color: var(--red); }
+  .c-amber { color: var(--amber); } .c-blue { color: var(--blue); }
+  .c-purple { color: var(--purple); }
+
+  /* ── Row layouts ── */
+  .row2 { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+
+  /* ── Panel ── */
+  .panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+  .panel-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .panel-title { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--text3); }
+  .p-badge { font-size: 9px; padding: 2px 7px; border-radius: 3px; background: var(--bg1); border: 1px solid var(--border2); color: var(--blue); }
+  .p-badge-red { background: rgba(255,68,68,.12); border-color: rgba(255,68,68,.3); color: var(--red); }
+  .p-badge-green { background: rgba(0,232,122,.1); border-color: rgba(0,232,122,.2); color: var(--green); }
+
+  /* ── Alert table ── */
+  .alert-table { width: 100%; border-collapse: collapse; }
+  .alert-table th { text-align: left; font-size: 9px; letter-spacing: 1.5px; color: var(--text3); padding: 0 8px 8px 0; font-weight: 400; border-bottom: 1px solid var(--border); }
+  .alert-table td { padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(26,48,80,.5); vertical-align: middle; }
+  .alert-row { cursor: pointer; transition: background .15s; }
+  .alert-row:hover { background: rgba(68,153,255,.05); }
+  .sev-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; }
+  .sev-CRITICAL { background: rgba(255,68,68,.18); color: var(--red); border: 1px solid rgba(255,68,68,.4); }
+  .sev-HIGH     { background: rgba(255,170,0,.15); color: var(--amber); border: 1px solid rgba(255,170,0,.3); }
+  .sev-MEDIUM   { background: rgba(68,153,255,.15); color: var(--blue); border: 1px solid rgba(68,153,255,.3); }
+  .sev-LOW      { background: rgba(0,232,122,.1); color: var(--green); border: 1px solid rgba(0,232,122,.25); }
+  .ip-link { color: var(--blue); cursor: pointer; font-size: 11px; }
+  .ip-link:hover { text-decoration: underline; }
+  .sig-cell { color: var(--text1); font-size: 11px; max-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ts-cell { color: var(--text3); font-size: 10px; white-space: nowrap; }
+
+  /* ── Geo map ── */
+  .geo-wrap { position: relative; }
+  .geo-svg { width: 100%; border-radius: 4px; background: #070e1c; }
+  .geo-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px; }
+  .geo-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text2); }
+  .geo-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Port / sig bars ── */
+  .bar-list { display: flex; flex-direction: column; gap: 7px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; }
+  .bar-label { min-width: 50px; font-size: 11px; color: var(--text2); }
+  .bar-name { min-width: 55px; font-size: 10px; color: var(--text3); }
+  .bar-track { flex: 1; background: var(--bg1); border-radius: 2px; height: 5px; }
+  .bar-fill { height: 5px; border-radius: 2px; transition: width .6s ease; }
+  .bar-count { min-width: 40px; text-align: right; font-size: 10px; color: var(--text3); }
+
+  /* ── Log stream ── */
+  .log-wrap { max-height: 200px; overflow-y: auto; }
+  .log-wrap::-webkit-scrollbar { width: 3px; }
+  .log-wrap::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  .log-line { display: grid; grid-template-columns: 68px 52px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(26,48,80,.4); font-size: 10px; }
+  .log-ts { color: var(--text3); }
+  .log-CRIT { color: var(--red); }
+  .log-WARN { color: var(--amber); }
+  .log-INFO { color: var(--blue); }
+  .log-msg { color: #7a9aaa; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* ── Anomaly banner ── */
+  .anomaly-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(255,68,68,.07); border: 1px solid rgba(255,68,68,.25); border-radius: 5px; font-size: 10px; color: #ff7777; }
+  .anom-score { font-size: 22px; font-weight: 700; color: var(--red); min-width: 40px; }
+
+  /* ── Drill-down overlay ── */
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(4,8,18,.85); z-index: 200; align-items: center; justify-content: center; }
+  .overlay.open { display: flex; }
+  .detail-panel { background: var(--bg2); border: 1px solid var(--border2); border-radius: 8px; width: 680px; max-width: 95vw; max-height: 88vh; overflow-y: auto; padding: 0; }
+  .detail-panel::-webkit-scrollbar { width: 4px; }
+  .detail-panel::-webkit-scrollbar-thumb { background: var(--border2); }
+  .detail-hdr { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg2); z-index: 1; }
+  .detail-title { font-size: 12px; letter-spacing: 1.5px; color: var(--text2); }
+  .close-btn { cursor: pointer; font-size: 18px; color: var(--text3); line-height: 1; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border); background: none; }
+  .close-btn:hover { color: var(--text1); border-color: var(--border2); }
+  .detail-body { padding: 20px; }
+  .detail-sig { font-size: 14px; color: var(--text1); font-weight: 700; margin-bottom: 16px; line-height: 1.4; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+  .detail-field { background: var(--bg1); border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; }
+  .df-lbl { font-size: 9px; letter-spacing: 1.5px; color: var(--text3); text-transform: uppercase; margin-bottom: 4px; }
+  .df-val { font-size: 12px; color: var(--text1); word-break: break-all; }
+  .detail-section { margin-bottom: 14px; }
+  .detail-section h4 { font-size: 9px; letter-spacing: 2px; color: var(--text3); text-transform: uppercase; margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+  .payload-box { background: var(--bg1); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; font-size: 11px; color: var(--green); word-break: break-all; min-height: 40px; }
+  .action-row { display: flex; gap: 8px; margin-top: 16px; }
+  .act-btn { flex: 1; padding: 8px; border-radius: 4px; border: 1px solid var(--border2); background: var(--bg1); color: var(--text2); cursor: pointer; font-family: var(--font); font-size: 11px; letter-spacing: 1px; transition: all .15s; }
+  .act-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .act-btn-red:hover { border-color: var(--red); color: var(--red); }
+  .tag-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .tag { font-size: 10px; padding: 3px 8px; border-radius: 3px; background: var(--bg1); border: 1px solid var(--border2); color: var(--text2); }
+
+  /* ── Sparklines in metrics ── */
+  .spark { display: flex; gap: 2px; align-items: flex-end; height: 20px; margin-top: 5px; }
+  .sp-bar { flex: 1; border-radius: 1px; min-height: 2px; }
+
+  @media (max-width: 1100px) {
+    .metrics { grid-template-columns: repeat(3, 1fr); }
+    .row2 { grid-template-columns: 1fr; }
+    .row3 { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 700px) {
+    .row3 { grid-template-columns: 1fr; }
+    .metrics { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<div class="hdr">
+  <div class="hdr-logo">
+    <div class="live-dot"></div>
+    <div>
+      <div class="logo-txt">CYBERSHIELD</div>
+      <div class="logo-sub">SOC MONITOR v1.0 · SURICATA IDS</div>
+    </div>
+  </div>
+  <div class="hdr-status">
+    <div class="st-chip"><div class="st-dot dot-g"></div>FIREWALL</div>
+    <div class="st-chip"><div class="st-dot dot-g"></div>IDS ENGINE</div>
+    <div class="st-chip"><div class="st-dot dot-a" id="alertDot"></div><span id="alertCount">0 ALERTS</span></div>
+    <span class="ws-badge" id="wsBadge">CONNECTING…</span>
+    <span id="clock">--:--:--</span> UTC
+  </div>
+</div>
+
+<!-- ── Main ─────────────────────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Metric cards -->
+  <div class="metrics">
+    <div class="mc">
+      <div class="mc-lbl">Packets / sec</div>
+      <div class="mc-val c-blue" id="mPps">—</div>
+      <div class="mc-sub" id="mPpsSub">waiting for data…</div>
+      <div class="spark" id="spPps"></div>
+    </div>
+    <div class="mc">
+      <div class="mc-lbl">Threats Blocked</div>
+      <div class="mc-val c-red" id="mBlocked">—</div>
+      <div class="mc-sub" id="mBlockedSub">total session</div>
+      <div class="spark" id="spBlocked"></div>
+    </div>
+    <div class="mc">
+      <div class="mc-lbl">Active Sessions</div>
+      <div class="mc-val c-green" id="mSessions">—</div>
+      <div class="mc-sub">TCP + UDP + ICMP</div>
+    </div>
+    <div class="mc">
+      <div class="mc-lbl">Bandwidth</div>
+      <div class="mc-val c-amber" id="mBandwidth">—</div>
+      <div class="mc-sub">Gbps inbound</div>
+    </div>
+    <div class="mc">
+      <div class="mc-lbl">Anomaly Score</div>
+      <div class="mc-val c-red" id="mAnomaly">—<span style="font-size:13px;color:var(--text3)">/100</span></div>
+      <div class="mc-sub c-red" id="mAnomalySub">calculating…</div>
+    </div>
+  </div>
+
+  <!-- Traffic chart + Geo map -->
+  <div class="row2">
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Network Traffic — 60-second window</span>
+        <span class="p-badge p-badge-green">● LIVE</span>
+      </div>
+      <div style="position:relative; height:160px;">
+        <canvas id="trafficChart"></canvas>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:10px;color:var(--text3);">
+        <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--blue);border-radius:1px;display:inline-block;"></span>Inbound pkts</span>
+        <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--green);border-radius:1px;display:inline-block;"></span>Outbound pkts</span>
+        <span style="display:flex;align-items:center;gap:4px;"><span style="width:8px;height:8px;background:var(--red);border-radius:1px;display:inline-block;"></span>Blocked</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Geographic Attack Origins</span>
+      </div>
+      <div class="geo-wrap">
+        <svg class="geo-svg" viewBox="0 0 300 160" xmlns="http://www.w3.org/2000/svg">
+          <rect width="300" height="160" fill="#060c18" rx="4"/>
+          <!-- Stylised continents -->
+          <path d="M18,48 Q25,40 55,38 Q85,36 90,55 Q88,80 78,85 Q60,90 40,78 Q15,68 18,48Z" fill="#0c1e30" opacity=".9"/>
+          <path d="M95,38 Q135,30 145,45 Q150,60 145,80 Q135,90 110,88 Q95,82 92,65 Q90,50 95,38Z" fill="#0c1e30" opacity=".9"/>
+          <path d="M118,22 Q145,18 158,30 Q162,45 155,58 Q145,62 130,58 Q118,50 118,35 Q117,28 118,22Z" fill="#0c1e30" opacity=".9"/>
+          <path d="M162,32 Q175,28 185,38 Q190,55 182,72 Q170,80 160,70 Q152,58 155,44 Q158,36 162,32Z" fill="#0c1e30" opacity=".9"/>
+          <path d="M195,48 Q215,42 230,52 Q240,65 232,78 Q218,85 205,78 Q195,68 194,58 Q193,52 195,48Z" fill="#0c1e30" opacity=".9"/>
+          <path d="M240,54 Q265,50 270,65 Q268,78 255,82 Q242,80 238,68 Q237,60 240,54Z" fill="#0c1e30" opacity=".9"/>
+          <!-- Home node -->
+          <circle cx="150" cy="82" r="6" fill="var(--green)" opacity=".85"/>
+          <circle cx="150" cy="82" r="14" fill="none" stroke="var(--green)" stroke-width=".8" opacity=".35">
+            <animate attributeName="r" values="6;20;6" dur="3s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values=".6;0;.6" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <!-- Attack nodes -->
+          <circle cx="225" cy="64" r="4.5" fill="var(--red)" opacity=".9" id="geoRU">
+            <animate attributeName="opacity" values="1;.2;1" dur="1.4s" repeatCount="indefinite"/>
+          </circle>
+          <line x1="225" y1="64" x2="150" y2="82" stroke="var(--red)" stroke-width=".6" stroke-dasharray="4,3" opacity=".4"/>
+          <circle cx="130" cy="52" r="3.5" fill="var(--amber)" opacity=".9">
+            <animate attributeName="opacity" values="1;.2;1" dur="1.8s" repeatCount="indefinite" begin=".5s"/>
+          </circle>
+          <line x1="130" y1="52" x2="150" y2="82" stroke="var(--amber)" stroke-width=".6" stroke-dasharray="4,3" opacity=".35"/>
+          <circle cx="172" cy="58" r="3" fill="var(--amber)" opacity=".9">
+            <animate attributeName="opacity" values="1;.2;1" dur="2.1s" repeatCount="indefinite" begin="1s"/>
+          </circle>
+          <line x1="172" y1="58" x2="150" y2="82" stroke="var(--amber)" stroke-width=".6" stroke-dasharray="4,3" opacity=".3"/>
+          <circle cx="92" cy="64" r="3" fill="var(--blue)" opacity=".9">
+            <animate attributeName="opacity" values="1;.2;1" dur="2.4s" repeatCount="indefinite" begin=".3s"/>
+          </circle>
+          <line x1="92" y1="64" x2="150" y2="82" stroke="var(--blue)" stroke-width=".6" stroke-dasharray="4,3" opacity=".3"/>
+          <circle cx="255" cy="68" r="3" fill="var(--purple)" opacity=".9">
+            <animate attributeName="opacity" values="1;.2;1" dur="1.6s" repeatCount="indefinite" begin=".8s"/>
+          </circle>
+          <line x1="255" y1="68" x2="150" y2="82" stroke="var(--purple)" stroke-width=".6" stroke-dasharray="4,3" opacity=".3"/>
+          <!-- Labels -->
+          <text x="219" y="60" fill="var(--red)" font-size="7" font-family="Courier New">CN</text>
+          <text x="122" y="48" fill="var(--amber)" font-size="7" font-family="Courier New">RU</text>
+          <text x="166" y="55" fill="var(--amber)" font-size="7" font-family="Courier New">IR</text>
+          <text x="82"  y="60" fill="var(--blue)" font-size="7" font-family="Courier New">US</text>
+          <text x="249" y="64" fill="var(--purple)" font-size="7" font-family="Courier New">KP</text>
+          <text x="141" y="100" fill="var(--green)" font-size="7" font-family="Courier New">HOME</text>
+          <text x="150" y="150" text-anchor="middle" fill="var(--text3)" font-size="7" font-family="Courier New">THREAT ORIGIN MAP</text>
+        </svg>
+      </div>
+      <div class="geo-legend" id="geoLegend">
+        <div class="geo-item"><div class="geo-dot" style="background:var(--red)"></div><span id="gL0">—</span></div>
+        <div class="geo-item"><div class="geo-dot" style="background:var(--amber)"></div><span id="gL1">—</span></div>
+        <div class="geo-item"><div class="geo-dot" style="background:var(--blue)"></div><span id="gL2">—</span></div>
+        <div class="geo-item"><div class="geo-dot" style="background:var(--purple)"></div><span id="gL3">—</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alert table + Port bars + Proto chart -->
+  <div class="row2" style="grid-template-columns:1fr 300px;">
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Live Alert Feed</span>
+        <span class="p-badge p-badge-red" id="alertBadge">0 ACTIVE</span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="alert-table">
+          <thead>
+            <tr>
+              <th>SEV</th><th>SIGNATURE</th><th>SRC IP</th><th>DEST</th><th>PROTO</th><th>TIME</th>
+            </tr>
+          </thead>
+          <tbody id="alertTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="panel" style="flex:1;">
+        <div class="panel-hdr">
+          <span class="panel-title">Top Attacked Ports</span>
+        </div>
+        <div class="bar-list" id="portBars"></div>
+      </div>
+      <div class="panel" style="flex:1;">
+        <div class="panel-hdr">
+          <span class="panel-title">Protocol Distribution</span>
+        </div>
+        <div style="position:relative;height:130px;">
+          <canvas id="protoChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Anomaly + Top Sigs + Log -->
+  <div class="row3">
+    <div class="panel">
+      <div class="panel-hdr"><span class="panel-title">Anomaly Detection</span></div>
+      <div class="anomaly-bar" style="margin-bottom:10px;">
+        <div class="anom-score" id="anomScore">—</div>
+        <div>
+          <div style="font-size:11px;color:var(--text1);margin-bottom:3px;" id="anomLabel">Calculating…</div>
+          <div style="font-size:10px;color:var(--text3);" id="anomNote">—</div>
+        </div>
+      </div>
+      <div class="bar-list" id="topAttackers"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hdr"><span class="panel-title">Top Triggered Signatures</span></div>
+      <div class="bar-list" id="sigBars"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Live Event Log</span>
+        <span class="p-badge p-badge-green">STREAM</span>
+      </div>
+      <div class="log-wrap" id="logWrap"></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ── Drill-down overlay ──────────────────────────────────────────────────── -->
+<div class="overlay" id="overlay">
+  <div class="detail-panel">
+    <div class="detail-hdr">
+      <span class="detail-title">THREAT DETAIL — DRILL DOWN</span>
+      <button class="close-btn" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body" id="detailBody">
+      <div style="color:var(--text3);padding:20px;text-align:center;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Clock ──────────────────────────────────────────────────────────────────
+function tick() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  document.getElementById('clock').textContent =
+    pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds());
+}
+setInterval(tick, 1000); tick();
+
+// ── Traffic chart ──────────────────────────────────────────────────────────
+let trafficData = { labels: Array(60).fill(''), in: Array(60).fill(0), out: Array(60).fill(0), blocked: Array(60).fill(0) };
+const tCtx = document.getElementById('trafficChart');
+const tChart = new Chart(tCtx, {
+  type: 'line',
+  data: {
+    labels: trafficData.labels,
+    datasets: [
+      { label:'In',      data: trafficData.in,      borderColor:'#4499ff', backgroundColor:'rgba(68,153,255,.07)', borderWidth:1.5, pointRadius:0, fill:true, tension:.4 },
+      { label:'Out',     data: trafficData.out,     borderColor:'#00e87a', backgroundColor:'rgba(0,232,122,.05)', borderWidth:1.5, pointRadius:0, fill:true, tension:.4 },
+      { label:'Blocked', data: trafficData.blocked, borderColor:'#ff4444', backgroundColor:'rgba(255,68,68,.09)', borderWidth:1.5, pointRadius:0, fill:true, tension:.4 },
+    ]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false, animation:{duration:200},
+    plugins:{ legend:{display:false}, tooltip:{mode:'index',intersect:false, backgroundColor:'#0b1222', borderColor:'#1a3050', borderWidth:1, titleColor:'#ddeeff', bodyColor:'#7a9ab8', titleFont:{family:'Courier New',size:10}, bodyFont:{family:'Courier New',size:10} } },
+    scales:{
+      x:{grid:{color:'rgba(26,48,80,.5)',lineWidth:.5},ticks:{color:'#3a5a7a',font:{family:'Courier New',size:9},maxTicksLimit:6}},
+      y:{grid:{color:'rgba(26,48,80,.5)',lineWidth:.5},ticks:{color:'#3a5a7a',font:{family:'Courier New',size:9}}}
+    }
+  }
+});
+
+function updateTrafficChart(series) {
+  if (!series || !series.length) return;
+  tChart.data.datasets[0].data = series.map(b => b.in || 0);
+  tChart.data.datasets[1].data = series.map(b => b.out || 0);
+  tChart.data.datasets[2].data = series.map(b => b.blocked || 0);
+  tChart.update('none');
+}
+
+// ── Proto chart ────────────────────────────────────────────────────────────
+const pCtx = document.getElementById('protoChart');
+let protoChart = null;
+function updateProtoChart(dist) {
+  const labels = Object.keys(dist);
+  const vals = Object.values(dist);
+  const colors = ['#4499ff','#00e87a','#aa55ff','#ff4444','#ffaa00','#3a5a7a'];
+  if (!protoChart) {
+    protoChart = new Chart(pCtx, {
+      type:'doughnut',
+      data:{ labels, datasets:[{data:vals,backgroundColor:colors,borderWidth:0}] },
+      options:{
+        responsive:true, maintainAspectRatio:false, cutout:'65%',
+        plugins:{ legend:{display:true,position:'right',labels:{color:'#5a7a9a',font:{family:'Courier New',size:9},boxWidth:8,padding:6}}, tooltip:{backgroundColor:'#0b1222',borderColor:'#1a3050',borderWidth:1,titleColor:'#ddeeff',bodyColor:'#7a9ab8'} }
+      }
+    });
+  } else {
+    protoChart.data.labels = labels;
+    protoChart.data.datasets[0].data = vals;
+    protoChart.update('none');
+  }
+}
+
+// ── Alert table ────────────────────────────────────────────────────────────
+let alertCache = {};
+function renderAlerts(alerts) {
+  const tbody = document.getElementById('alertTbody');
+  const rows = alerts.slice(0,20).map(a => {
+    alertCache[a.id] = a;
+    const ts = a.timestamp ? new Date(a.timestamp).toLocaleTimeString('en-GB',{hour12:false}) : '--:--:--';
+    return `<tr class="alert-row" onclick="openDetail('${a.id}')">
+      <td><span class="sev-badge sev-${a.severity_label||'LOW'}">${a.severity_label||'LOW'}</span></td>
+      <td class="sig-cell" title="${a.signature||''}">${a.signature||'Unknown'}</td>
+      <td><span class="ip-link">${a.src_ip||'—'}</span></td>
+      <td style="color:var(--text2);font-size:11px;">${a.dest_ip||'—'}:${a.dest_port||0}</td>
+      <td style="color:var(--text3);font-size:10px;">${a.proto||'—'}</td>
+      <td class="ts-cell">${ts}</td>
+    </tr>`;
+  }).join('');
+  tbody.innerHTML = rows || `<tr><td colspan="6" style="color:var(--text3);padding:16px;text-align:center;">Waiting for alerts…</td></tr>`;
+
+  const count = alerts.length;
+  document.getElementById('alertBadge').textContent = count + ' ACTIVE';
+  document.getElementById('alertCount').textContent = count + ' ALERTS';
+  document.getElementById('alertDot').className = 'st-dot ' + (count > 5 ? 'dot-r' : count > 0 ? 'dot-a' : 'dot-g');
+}
+
+// ── Port bars ──────────────────────────────────────────────────────────────
+const PORT_NAMES = {'22':'SSH','443':'HTTPS','80':'HTTP','3306':'MySQL','21':'FTP','3389':'RDP','8080':'HTTP-Alt','53':'DNS','23':'Telnet','5900':'VNC'};
+const PORT_COLORS = {'22':'var(--red)','443':'var(--amber)','3306':'var(--amber)','80':'var(--blue)','21':'var(--blue)','3389':'var(--red)','8080':'var(--blue)','53':'var(--green)'};
+function renderPortBars(ports) {
+  if (!ports.length) return;
+  const max = ports[0].hits;
+  document.getElementById('portBars').innerHTML = ports.slice(0,7).map(p => {
+    const pct = max > 0 ? Math.round((p.hits/max)*100) : 0;
+    const col = PORT_COLORS[p.port] || 'var(--blue)';
+    return `<div class="bar-row">
+      <span class="bar-label c-blue">:${p.port}</span>
+      <span class="bar-name" style="color:var(--text3);">${PORT_NAMES[p.port]||'—'}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${col};"></div></div>
+      <span class="bar-count">${p.hits.toLocaleString()}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Signature bars ─────────────────────────────────────────────────────────
+function renderSigBars(sigs) {
+  if (!sigs.length) return;
+  const max = sigs[0].hits;
+  document.getElementById('sigBars').innerHTML = sigs.map((s,i) => {
+    const pct = max > 0 ? Math.round((s.hits/max)*100) : 0;
+    const label = s.signature.replace(/^ET\s+/,'').slice(0,38);
+    const colors = ['var(--red)','var(--amber)','var(--blue)','var(--green)','var(--purple)'];
+    return `<div class="bar-row">
+      <div style="flex:1;">
+        <div style="font-size:10px;color:var(--text1);margin-bottom:3px;">${label}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${colors[i]};"></div></div>
+      </div>
+      <span class="bar-count" style="margin-left:6px;">${s.hits}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Top attackers ──────────────────────────────────────────────────────────
+function renderAttackers(attackers) {
+  if (!attackers.length) return;
+  const max = attackers[0].hits;
+  document.getElementById('topAttackers').innerHTML = attackers.slice(0,6).map(a => {
+    const pct = max > 0 ? Math.round((a.hits/max)*100) : 0;
+    return `<div class="bar-row">
+      <span class="bar-label ip-link" onclick="filterByIP('${a.ip}')" style="min-width:120px;">${a.ip}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--red);"></div></div>
+      <span class="bar-count">${a.hits}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Geo legend ─────────────────────────────────────────────────────────────
+function renderGeo(countries) {
+  countries.slice(0,4).forEach((c, i) => {
+    const el = document.getElementById('gL'+i);
+    if (el) el.textContent = c.country + ' — ' + c.hits.toLocaleString() + ' hits';
+  });
+}
+
+// ── Anomaly ────────────────────────────────────────────────────────────────
+function renderAnomaly(metrics) {
+  const score = metrics.anomaly_score || 0;
+  document.getElementById('anomScore').textContent = score;
+  const label = score >= 80 ? 'CRITICAL RISK' : score >= 50 ? 'HIGH RISK' : score >= 25 ? 'ELEVATED' : 'NORMAL';
+  document.getElementById('anomLabel').textContent = label;
+  document.getElementById('anomNote').textContent = (metrics.anomaly_notes||[]).join(' · ') || 'No anomalies';
+  document.getElementById('mAnomaly').innerHTML = score + '<span style="font-size:13px;color:var(--text3)">/100</span>';
+}
+
+// ── Log stream ─────────────────────────────────────────────────────────────
+function addLog(ev) {
+  const wrap = document.getElementById('logWrap');
+  const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString('en-GB',{hour12:false}) : '??:??:??';
+  let lvl = 'INFO', cls = 'log-INFO', msg = '';
+  if (ev.event_type === 'alert') {
+    lvl = ev.severity_label === 'CRITICAL' ? 'CRIT' : ev.severity_label === 'HIGH' ? 'WARN' : 'INFO';
+    cls = 'log-'+lvl;
+    msg = (ev.signature||'Unknown') + ' — ' + (ev.src_ip||'?');
+  } else if (ev.event_type === 'stats') {
+    msg = `Stats update — ${(ev.pkts||0).toLocaleString()} pkts/s`;
+  } else {
+    msg = `Flow: ${ev.src_ip||'?'} → ${ev.dest_ip||'?'}:${ev.dest_port||0}`;
+  }
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.style.background = 'rgba(68,153,255,.07)';
+  div.innerHTML = `<span class="log-ts">${ts}</span><span class="${cls}">[${lvl}]</span><span class="log-msg">${msg}</span>`;
+  wrap.insertBefore(div, wrap.firstChild);
+  setTimeout(() => { div.style.background = ''; }, 1000);
+  while (wrap.children.length > 14) wrap.removeChild(wrap.lastChild);
+}
+
+// ── Full state update ──────────────────────────────────────────────────────
+function applySnapshot(data) {
+  const m = data.metrics || {};
+  document.getElementById('mPps').textContent      = (m.packets_per_sec||0).toLocaleString();
+  document.getElementById('mBlocked').textContent  = (m.threats_blocked||0).toLocaleString();
+  document.getElementById('mSessions').textContent = (m.active_sessions||0).toLocaleString();
+  document.getElementById('mBandwidth').textContent= (m.bandwidth_gbps||0).toFixed(2)+' Gbps';
+  renderAnomaly(m);
+
+  updateTrafficChart(data.traffic_series);
+  renderAlerts(data.recent_alerts || []);
+  renderPortBars(data.top_ports || []);
+  renderSigBars(data.top_signatures || []);
+  renderAttackers(data.top_attackers || []);
+  renderGeo(data.top_countries || []);
+  if (data.proto_distribution) updateProtoChart(data.proto_distribution);
+}
+
+function applySummary(data) {
+  const m = data.metrics || {};
+  document.getElementById('mPps').textContent      = (m.packets_per_sec||0).toLocaleString();
+  document.getElementById('mBlocked').textContent  = (m.threats_blocked||0).toLocaleString();
+  document.getElementById('mSessions').textContent = (m.active_sessions||0).toLocaleString();
+  document.getElementById('mBandwidth').textContent= (m.bandwidth_gbps||0).toFixed(2)+' Gbps';
+  renderAnomaly(m);
+  updateTrafficChart(data.traffic_series);
+  renderPortBars(data.top_ports || []);
+  renderSigBars(data.top_signatures || []);
+  renderAttackers(data.top_attackers || []);
+  renderGeo(data.top_countries || []);
+  if (data.proto_distribution) updateProtoChart(data.proto_distribution);
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+const socket = io();
+const wsBadge = document.getElementById('wsBadge');
+
+socket.on('connect', () => {
+  wsBadge.textContent = '● WS LIVE';
+  wsBadge.style.cssText = 'font-size:9px;padding:2px 8px;border-radius:3px;background:rgba(0,232,122,.12);color:var(--green);border:1px solid rgba(0,232,122,.3);';
+});
+socket.on('disconnect', () => {
+  wsBadge.textContent = '⊘ WS OFF';
+  wsBadge.style.cssText = 'font-size:9px;padding:2px 8px;border-radius:3px;background:rgba(255,68,68,.12);color:var(--red);border:1px solid rgba(255,68,68,.3);';
+});
+socket.on('snapshot', applySnapshot);
+socket.on('summary',  applySummary);
+socket.on('alert', ev => {
+  addLog(ev);
+  alertCache[ev.id] = ev;
+  // Prepend to table
+  const tbody = document.getElementById('alertTbody');
+  const ts = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString('en-GB',{hour12:false}) : '--:--:--';
+  const tr = document.createElement('tr');
+  tr.className = 'alert-row';
+  tr.style.background = 'rgba(255,68,68,.06)';
+  tr.innerHTML = `<td><span class="sev-badge sev-${ev.severity_label||'LOW'}">${ev.severity_label||'LOW'}</span></td>
+    <td class="sig-cell" title="${ev.signature||''}">${ev.signature||'Unknown'}</td>
+    <td><span class="ip-link">${ev.src_ip||'—'}</span></td>
+    <td style="color:var(--text2);font-size:11px;">${ev.dest_ip||'—'}:${ev.dest_port||0}</td>
+    <td style="color:var(--text3);font-size:10px;">${ev.proto||'—'}</td>
+    <td class="ts-cell">${ts}</td>`;
+  tr.onclick = () => openDetail(ev.id);
+  tbody.insertBefore(tr, tbody.firstChild);
+  setTimeout(() => { tr.style.background = ''; }, 1200);
+  while (tbody.rows.length > 20) tbody.deleteRow(tbody.rows.length-1);
+});
+socket.on('stats', ev => addLog(ev));
+socket.on('flow',  ev => addLog(ev));
+
+// ── Drill-down detail ──────────────────────────────────────────────────────
+function openDetail(id) {
+  const a = alertCache[id];
+  if (!a) {
+    // Try REST fallback
+    fetch(`/api/v1/alerts/${id}`)
+      .then(r => r.json())
+      .then(data => { alertCache[id] = data; renderDetail(data); })
+      .catch(() => renderDetail(null));
+  } else {
+    renderDetail(a);
+  }
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeDetail() {
+  document.getElementById('overlay').classList.remove('open');
+}
+
+document.getElementById('overlay').addEventListener('click', function(e) {
+  if (e.target === this) closeDetail();
+});
+
+function renderDetail(a) {
+  if (!a) {
+    document.getElementById('detailBody').innerHTML = '<div style="color:var(--text3);padding:30px;text-align:center;">Alert not found</div>';
+    return;
+  }
+  const ts = a.timestamp ? new Date(a.timestamp).toLocaleString('en-GB') : '—';
+  const tags = [a.category, a.proto, a.app_proto, a.country, a.action].filter(Boolean);
+  const http = a.http_hostname ? `<div class="detail-section"><h4>HTTP Context</h4><div class="detail-grid">
+    <div class="detail-field"><div class="df-lbl">Hostname</div><div class="df-val">${a.http_hostname||'—'}</div></div>
+    <div class="detail-field"><div class="df-lbl">Method</div><div class="df-val">${a.http_method||'—'}</div></div>
+    <div class="detail-field" style="grid-column:1/-1;"><div class="df-lbl">URL</div><div class="df-val">${a.http_url||'—'}</div></div>
+  </div></div>` : '';
+  const dns = a.dns_query ? `<div class="detail-section"><h4>DNS Context</h4><div class="detail-field"><div class="df-lbl">Query</div><div class="df-val">${a.dns_query}</div></div></div>` : '';
+  const tls = a.tls_sni ? `<div class="detail-section"><h4>TLS Context</h4><div class="detail-field"><div class="df-lbl">SNI</div><div class="df-val">${a.tls_sni}</div></div></div>` : '';
+
+  document.getElementById('detailBody').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <span class="sev-badge sev-${a.severity_label||'LOW'}" style="font-size:11px;padding:4px 10px;">${a.severity_label||'LOW'}</span>
+      <span style="font-size:10px;color:var(--text3);">SID ${a.signature_id||'—'} · ${ts}</span>
+    </div>
+    <div class="detail-sig">${a.signature||'Unknown Signature'}</div>
+    <div class="tag-row">${tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>
+
+    <div class="detail-section" style="margin-top:14px;"><h4>Network Flow</h4>
+    <div class="detail-grid">
+      <div class="detail-field"><div class="df-lbl">Source IP</div><div class="df-val c-red">${a.src_ip||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Source Port</div><div class="df-val">${a.src_port||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Destination IP</div><div class="df-val">${a.dest_ip||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Destination Port</div><div class="df-val">${a.dest_port||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Protocol</div><div class="df-val">${a.proto||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Country</div><div class="df-val">${a.country||'Unknown'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Interface</div><div class="df-val">${a.in_iface||'—'}</div></div>
+      <div class="detail-field"><div class="df-lbl">Flow ID</div><div class="df-val" style="font-size:10px;">${a.flow_id||'—'}</div></div>
+    </div></div>
+
+    ${http}${dns}${tls}
+
+    <div class="detail-section"><h4>Payload Preview</h4>
+    <div class="payload-box">${a.payload_printable || '<span style="color:var(--text3)">(no printable payload)</span>'}</div>
+    </div>
+
+    <div class="action-row">
+      <button class="act-btn" onclick="filterByIP('${a.src_ip}');closeDetail();">Filter by IP</button>
+      <button class="act-btn" onclick="copyAlert('${a.id}')">Copy JSON</button>
+      <button class="act-btn act-btn-red" onclick="blockIP('${a.src_ip}')">Block IP ↗</button>
+    </div>`;
+}
+
+function filterByIP(ip) {
+  fetch(`/api/v1/alerts?src_ip=${ip}&per_page=50`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.alerts) renderAlerts(data.alerts);
+    });
+}
+
+function copyAlert(id) {
+  const a = alertCache[id];
+  if (a) navigator.clipboard.writeText(JSON.stringify(a, null, 2));
+}
+
+function blockIP(ip) {
+  alert(`Block IP: ${ip}\n\nIn production, this would call your firewall API or push a Suricata rule to drop all traffic from this source.`);
+}
+
+// ── Initial REST fetch (before WS fires) ──────────────────────────────────
+fetch('/api/v1/snapshot')
+  .then(r => r.ok ? r.json() : null)
+  .then(data => { if(data) applySnapshot(data); })
+  .catch(() => {});
+</script>
+</body>
+</html>
