@@ -1,0 +1,10 @@
+flask>=3.0.0
+flask-socketio>=5.3.6
+flask-cors>=4.0.0
+python-engineio>=4.9.0
+python-socketio>=5.11.0
+# Optional: for real GeoIP lookups (requires MaxMind GeoLite2 DB)
+# geoip2>=4.7.0
+# Optional: for production WSGI server
+# gunicorn>=21.2.0
+# eventlet>=0.35.1
